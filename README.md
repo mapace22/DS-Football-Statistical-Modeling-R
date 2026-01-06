@@ -27,3 +27,9 @@ This project focuses on the application of inferential statistics and predictive
 - **Generalized Linear Models (GLM)**
 - **Hypothesis Testing & Post-hoc Analysis**
 - **Data Storytelling & Reporting**
+
+## ⚙️ How to Reproduce
+1. Clone this repository.
+2. Open `M6 Marcel Palma.Rmd` in RStudio.
+3. Ensure the dataset is in the `/data` folder.
+4. Run all chunks to reproduce the analysis and the ZINB model.
