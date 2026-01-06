@@ -1,0 +1,957 @@
+
+
+
+---
+title: "Análisis de Datos de Fútbol — Caso Práctico"
+author: "Marcel Andrés Palma Céspedes"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  html_notebook:
+    toc: true
+    toc_depth: 2
+    number_sections: false
+    theme: cosmo
+  word_document:
+    toc: true
+    toc_depth: '2'
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+---
+
+<div style="background:#0b3d91;color:white;padding:18px;border-radius:8px;margin-bottom:12px;">
+  <h1 style="margin:0;padding:0;">📊 Análisis de Datos de Fútbol — Caso Práctico</h1>
+  <p style="margin:0.2rem 0 0 0;">IMMUNE Technology Institute — Informe interactivo (R Notebook)</p>
+</div>
+
+
+# Introducción  
+
+Este proyecto busca realizar un análisis exploratorio y predictivo de los datos 
+de rendimiento de jugadores de fútbol, utilizando **R** como herramienta principal.  
+
+**Objetivos principales:**
+- Analizar patrones en variables de rendimiento (goles, minutos, posiciones, etc.).
+- Construir un modelo de regresión para predecir una variable objetivo.
+- Evaluar el modelo con métricas estadísticas (RMSE, R²).
+- Aplicar ANOVA y comparaciones múltiples (Tukey) para contrastar grupos.
+
+
+# 📊 Paso 1 (Código): instalar y cargar librerías + configurar opciones
+```{r setup, message=FALSE, warning=FALSE}
+# Paso 1: instalar y cargar librerías + configurar opciones
+
+# Instalar paquetes si no existen (ejecuta sólo la primera vez)
+required_pkgs <- c(
+  "tidyverse", "readxl", "janitor", "skimr", "GGally",
+  "caret", "broom", "generics", "vctrs", "dplyr", "AER", "car","pscl", "ggplot2", "data.table", "patchwork", "multcomp", "kableExtra"
+)
+
+new_pkgs <- required_pkgs[!(required_pkgs %in% installed.packages()[, "Package"])]
+if (length(new_pkgs) > 0) install.packages(new_pkgs)
+
+# Cargar librerías
+suppressPackageStartupMessages({
+  library(knitr)
+  library(pscl)
+  library(generics)
+  library(AER)
+  library(kableExtra)
+  library(tidyverse)
+  library(readxl)
+  library(vctrs)
+  library(dplyr)
+  library(janitor)
+  library(skimr)
+  library(GGally)
+  library(caret)
+  library(broom)
+  library(car)
+  library(patchwork)
+  library(multcomp)
+  library(data.table)
+})
+
+# Opciones estéticas y reproducibilidad
+options(stringsAsFactors = FALSE)
+set.seed(123)
+theme_set(theme_minimal())
+```
+
+## 🧩 Comprobación de librerías
+```{r}
+# Verifica que los paquetes se cargan sin error
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(skimr)
+library(GGally)
+library(caret)
+library(broom)
+library(car)
+library(patchwork)
+library(multcomp)
+library(data.table)
+```
+
+# 🪶 Paso 2: Cargar y explorar la base de datos
+```{r}
+ruta <- "C:/Users/Marcel Palma/Desktop/IMMUNE/6. Asignatura 6  Estadística para científicos de datos Programación en R/Case to be solved/df_futbol.xlsx"
+
+# Leer el archivo Excel y limpiar nombres de columnas
+df <- read_excel(ruta) %>%
+  clean_names()
+```
+
+
+```{r}
+# Mostrar las primeras filas del dataset
+head(df)
+
+# Ver el número de filas y columnas
+dim(df)
+
+# Ver los nombres de las columnas
+names(df)
+```
+
+# 🪶 Paso 3 — Limpieza y preparación inicial de datos
+
+En esta etapa se revisa la calidad de los datos y se crean variables derivadas
+que servirán para el análisis exploratorio y la modelización.
+Se examinan los valores faltantes, duplicados y se generan nuevas variables
+como la razón de goles por 90 minutos de juego.
+
+```{r limpieza_datos}
+# Paso 3: Limpieza y preparación inicial de datos
+
+# 1. Revisar valores faltantes (NA)
+colSums(is.na(df))
+
+# 2. Verificar si existen filas duplicadas
+duplicados <- df[duplicated(df), ]
+nrow(duplicados)
+
+# 3. Crear variables derivadas útiles para el análisis
+#    (solo si las columnas necesarias existen y no tienen NA críticos)
+
+df <- df %>%
+  mutate(
+    # Goles por 90 minutos jugados
+    goles_por_90 = if_else(min > 0, (goles / min) * 90, NA_real_),
+
+    # Asistencias por 90 minutos jugados
+    asistencias_por_90 = if_else(min > 0, (asistencias / min) * 90, NA_real_),
+
+    # Porcentaje de partidos jugados como titular
+    pct_titular = if_else(partidos_jugados > 0, (titular / partidos_jugados) * 100, NA_real_)
+  )
+
+# 4. Verificar que las nuevas columnas se hayan creado correctamente
+glimpse(df)
+```
+
+## 🧩 Corrección en dataset desde el archivo de excel
+Algunos casos como Joan Oblak, portero del Atlético de Madrid ha jugado 38 partidos y ha sido titular en todos, pero la celda indica 3,42 minutos lo cual es imposible. Se debe interpretar como 3240 (90 * 38 jugados son 3240 ó tres mil doscientos cuarenta minutos). En el caso de Héctor Herrera jugó 16 partidos y ha sido titular sólo en 8, muestra 682 minutos, ahí si está correcto pues 8 * 90 es 720 minutos muy similar a 682 y seguramente no jugó todo el partido. Conclusión: multiplicar por mil los que tienen comas y los que no dejarlos tal cual, pero se prefiere cambiarlo directamente del data set en excel.
+
+
+## 🧩 Verificación rápida (solo para comprobar)
+```{r}
+summary(df$min)
+summary(df$goles_por_90)
+summary(df$asistencias_por_90)
+```
+
+# 🚀 Paso 4: Análisis Exploratorio (EDA)
+Gráficos y resumen con ggplot2 y GGall (informe estilo html)
+
+```{r paso4_eda}
+
+# Distribución de minutos jugados
+ggplot(df, aes(x = min)) +
+  geom_histogram(bins = 20, fill = "#2E86AB", color = "white", alpha = 0.8) +
+  labs(title = "Distribución de minutos jugados", x = "Minutos", y = "Frecuencia")
+
+# Distribución de goles y asistencias
+p1 <- ggplot(df, aes(x = goles)) +
+  geom_histogram(bins = 20, fill = "#2ECC71", color = "white") +
+  labs(title = "Distribución de goles", x = "Goles")
+
+p2 <- ggplot(df, aes(x = asistencias)) +
+  geom_histogram(bins = 20, fill = "#F39C12", color = "white") +
+  labs(title = "Distribución de asistencias", x = "Asistencias")
+
+# Mostrar ambos histogramas juntos
+p1 + p2
+
+# Boxplot comparando goles por posición
+ggplot(df, aes(x = posicion, y = goles, fill = posicion)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Distribución de goles según posición", x = "Posición", y = "Goles") +
+  theme(legend.position = "none")
+
+# Correlación entre variables numéricas (usando dplyr::select para evitar conflictos)
+df %>%
+  dplyr::select(edad, min, goles, asistencias, goles_por_90, asistencias_por_90) %>%
+  GGally::ggpairs(title = "Matriz de correlación entre variables clave")
+```
+
+## 📊 Interpretación del primer gráfico de histograma:(Minutos jugados) 
+### DISTRIBUCIÓN DE MINUTOS JUGADOS
+- Distribución asimétrica con sesgo positivo
+- Pico principal de alta frecuencia alrededor de los 0-500 minutos
+- Cola larga extenida hasta los 3000 minutos
+- Jugadores con pocos minutos, concentrados en el extremo izquierdo. Muchos con participación limitada
+- Jugadores titulares con obvia frecuencia más baja y constante entre 1500 y 3000 minutos
+- Brecha notable por disminución abrupta después del pico inicial, refleja clara división entre suplentes y titulares
+- Polarización en el uso de jugadores
+- Muchos de estos tienen roles secundarios o de rotación
+- Pocos alcanzan los 3000 minutos (equivalente a ≈33 a 35 partidos completos)
+
+
+## 📊 Interpretación del segundo gráfico de histogramas: (Goles vs Asistencias)
+### DISTRIBUCIÓN DE GOLES
+- Distribución exponencial/poisson típica del fútbol
+- Pico de ≈300 jugadores que anotan de 0 a 2 goles
+- Cola larga, pocos jugadores con más de 10 goles.
+- Algunos alcanzan un máximo de 25 a 30 goles
+- La mayor parte anota poco (Entre un 75 y 80% de jugadores tiene ≤5 goles)
+- Goleadores escasos, pocos superan los 15 goles
+- Distribución esperada que Coincide con la realidad del fútbol, en el cual es común que pocos anoten muchos goles
+### DISTRIBUCIÓN DE ASISTENCIAS (Gráfico derecho)
+- Similar al de goles pero más concentrado
+- Pico más pronunciado en ≈300 jugadores con 0 a 1 asistencias
+- El rango más limitado es de máximo ≈10 a 12 asistencias
+- Mayor concentración en valores bajos
+- Asistentes regulares, pocos superan 5 asistencias
+- En comparación con goles las asistencias son más difíciles de conseguir
+- El fútbol es un deporte de pocos anotadores
+- La productividad ofensiva se concentra en un pequeño grupo
+- Patrón típico de la liga española es que pocos jugadores dominan las estadísticas ofensivas
+
+
+## 📊  Interpretación del tercer gráfico boxplot: (Goles por Posición)
+### DISTRIBUCIÓN DE GOLES SEGÚN POSICIÓN
+#### Claves de nomenclatura:
+- CC: Delanteros/Center Forward
+- DF: Defensas
+- DL: Mediocampistas
+- PO: Porteros
+#### Combinaciones: 
+- Posiciones híbridas (ej: CC_DF = Delantero con funciones defensivas)
+
+### ANÁLISIS POR POSICIÓN:
+🏆 MÁXIMOS GOLEADORES:
+
+  - CC (Delanteros puros): Mayor mediana y rango intercuartílico
+  - DL_CC (Mediocampistas ofensivos): Segundos en productividad
+  - CC_DL (Delanteros con perfil de mediocampista): Buen rendimiento goleador
+  
+⚡ POSICIONES HÍBRIDAS INTERESANTES:
+
+  - CC_DF: Sorprendente buen rendimiento (delanteros defensivos)
+  - DL_CC vs CC_DL: Diferencia notable a favor de los que tienen CC como posición principal
+  
+🛡️ POSICIONES DEFENSIVAS:
+
+  - DF (Defensas puros): Muy baja productividad goleadora
+  - DF_CC, DF_DL: Ligeramente mejor pero aún baja
+  - PO (Porteros): Casi nula contribución goleadora por obvias razones
+  
+🧩 OBSERVACIONES:
+
+- Variabilidad en CC: Amplio rango entre el percentil 25 y 75 en delanteros
+- Outliers destacables en algunos defensas (DF) y mediocampistas (DL) con rendimiento excepcional
+- Efectividad de especialización en CC puro, supera a todas las combinaciones híbridas
+- Delanteros tradicionales siguen siendo los máximos goleadores
+- Posiciones híbridas ofensivas tienen buen rendimiento
+- Clara especialización ofensiva vs defensiva.
+
+
+
+## 📊 Interpretación de la Matriz de Correlación
+La matriz muestra la relación entre seis variables clave: **edad**, **min** (minutos jugados), **goles** (totales), **asistencias**, **goles_por_90** (goles por 90 minutos) y **asistencias_por_90** (asistencias por 90 minutos).  
+
+---
+
+### A. Correlaciones de Rendimiento Total (Goles y Asistencias)
+
+| Variables | Correlación (r) | Significado |
+|------------|-----------------|--------------|
+| **Goles vs Asistencias** | 0.531*** | 🔹 Fuerte correlación positiva. Los jugadores que marcan muchos goles también tienden a dar muchas asistencias, lo que sugiere una productividad ofensiva integral. |
+| **Minutos vs Goles** | 0.395*** | 🔹 Correlación positiva moderada. Cuantos más minutos juega un jugador, más oportunidades tiene de marcar. |
+| **Minutos vs Asistencias** | 0.435*** | 🔹 Correlación positiva moderada-fuerte. El tiempo en cancha influye incluso más en la acumulación de asistencias que de goles. |
+
+> 💡 *Los asteriscos (***) indican significancia estadística (p < 0.001).*
+
+
+🏆 En las correlaciones de rendimiento total se confirma que el rendimiento ofensivo es integral y está impulsado por la participación.
+- Productividad ofensiva unificada (r=0.531): Los jugadores que marcan muchos goles también son los que más asisten. Sugiere que la habilidad ofensiva es una cualidad completa, no se limita sólo a finalizar o crear el juego.
+- Importancia del tiempo de juego: Correlación moderada - fuerte entre minutos y estadísticas totales de goles (r=0.395) y asistencias (r=0.435). 
+- Para acumular grandes números la condición básica es ser jugador titular habitual.
+
+---
+
+### B. Correlaciones de Eficiencia (Por cada 90 minutos)
+
+Estas variables miden la **eficiencia**, independientemente de cuántos minutos haya jugado el jugador.
+
+| Variables | Correlación (r) | Significado |
+|------------|-----------------|--------------|
+| **Goles vs Goles_por_90** | 0.719*** | 🔹 Correlación muy fuerte. Los jugadores con más goles totales también son más eficientes. |
+| **Asistencias vs Asistencias_por_90** | 0.447*** | 🔹 Correlación moderada-fuerte. Los que más asisten suelen tener buena tasa por minuto, pero con más variabilidad. |
+| **Goles_por_90 vs Asistencias_por_90** | 0.308*** | 🔹 Correlación baja-moderada. Los jugadores más eficientes al marcar también suelen asistir más, aunque hay cierta especialización. |
+
+⚡En la correlación de la eficiencia (por cada 90 Minutos). Esta tabla analiza la calidad del rendimiento sin importar el tiempo jugado.
+- El goleador es eficiente (r=0.719): La correlación más alta de toda la matriz es entre Goles (totales) y Goles_por_90. Los jugadores que logran marcar muchos goles tienen tasas de eficiencia goleadora muy altas, e indica que el volumen es un reflejo directo de la calidad de finalización.
+- Especialización: La correlación entre Goles_por_90 y Asistencias_por_90 es la más baja de todas (r=0.308). Sugiere que a nivel de eficiencia hay mayor especialización. Un jugador puede ser muy eficiente marcando pero no asistiendo y viceversa.
+
+---
+
+### 🧓 C. Correlaciones con la Edad
+
+| Variables | Correlación (r) | Significado |
+|------------|-----------------|--------------|
+| **Edad vs Minutos** | 0.311*** | 🔹 Correlación baja-moderada. Los jugadores más veteranos tienden a jugar más minutos, posiblemente por confianza o experiencia. |
+| **Edad vs Goles** | 0.137*** | 🔹 Relación positiva débil. |
+| **Edad vs Asistencias** | 0.141*** | 🔹 Relación positiva débil. |
+| **Edad vs Goles_por_90** | 0.077 | 🔸 Correlación casi nula. |
+| **Edad vs Asistencias_por_90** | −0.012 | 🔸 Correlación nula o irrelevante. |
+
+> 🧠 **Conclusión sobre la Edad:** La edad no tiene un efecto claro sobre la eficiencia; aunque los jugadores mayores juegan más minutos, su rendimiento por 90 minutos es similar al de los jóvenes.
+
+🧓 Correlaciones con Edad: Se evalúa el impacto de la experiencia en el rendimiento.
+- La Experiencia da minutos: Correlación positiva débil con Minutos (r=0.311). Los jugadores más experimentados dentro del rango de la liga tienden a ser los que más minutos de juego acumulan (son la base del equipo).
+- La Edad no define eficiencia: Correlaciones con las métricas por_90 (Goles_por_90:r=0.077; Asistencias_por_90: r=-0.012) son prácticamente nulas. La efectividad y la calidad del rendimiento de un jugador en la liga española (según tasa por 90 minutos) no dependen de la edad. Los jóvenes talentos pueden ser tan eficientes como los veteranos consolidados.
+
+---
+
+### 🎯 Conclusión General del Gráfico
+
+- ⚽ **Productividad  ofensiva integral:** La correlación entre goles y asistencias (r = 0.531***) es la más alta entre los totales, mostrando que el talento ofensivo suele ser completo.  
+- ⏱️ **La cantidad impulsa al total:** Las correlaciones moderadas con los minutos confirman que el volumen de juego determina la acumulación de goles y asistencias.  
+- 👴 **La edad no es un factor de eficiencia:** Aunque la experiencia influye en el tiempo jugado, la productividad por 90 minutos no depende significativamente de la edad.
+
+---
+
+💬 *En resumen:* 
+- El rendimiento total está impulsado por la participación en cancha
+- La eficiencia es una cualidad más individual y estable, independiente de la edad. 
+- La participación ofensiva es un rasgo completo (goles y asistencias de la mano).
+- El rendimiento ofensivo altamente polarizado (pocos jugadores acumulan grandes números).
+- La edad está más relacionada con ser titular y acumular minutos que con la eficiencia del rendimiento en el campo.
+
+
+
+
+# ⚙️ PASO 5 – Modelado de Regresión Múltiple
+## 🧩 1️⃣ Definir el objetivo y preparar los datos
+```{r paso5_preparar_datos}
+# Objetivo: Predecir los goles de un jugador en función de sus características. Analizar la cantidad de goles en función de las variables relevantes del jugador (edad, minutos jugados, asistencias y posición).
+
+# Seleccionamos las variables más relevantes
+modelo_df <- df %>%
+  dplyr::select(goles, edad, min, asistencias, posicion) %>%
+  mutate(posicion = as.factor(posicion))  # Convertimos posición a variable categórica
+
+# Verificar estructura
+glimpse(modelo_df)
+```
+💡 Se escoge la variable dependiente (goles)
+💡 Independientes: edad, minutos, asistencias y posición
+💡 Se convierte posición en factor (porque es categórica)
+
+## ✂️ 2️⃣ Dividir en conjuntos de entrenamiento y prueba (Train & Test)
+Con "caret" dividir datos (80 % entrenamiento y 20 % prueba):
+```{r paso5_dividir_datos}
+set.seed(123)  # Reproducibilidad
+
+# Dividir datos en train (80%) y test (20%)
+indice <- createDataPartition(modelo_df$goles, p = 0.8, list = FALSE)
+train_data <- modelo_df[indice, ]
+test_data  <- modelo_df[-indice, ]
+
+# Revisar dimensiones
+dim(train_data)
+dim(test_data)
+```
+Se asegura que el modelo se entrene y evalúe con datos distintos y evitar el sobreajuste.
+
+##  📊 3️⃣ Entrenar el modelo de regresión múltiple
+Ajuste del modelo lineal (lm) con variables predictoras:
+```{r paso5_entrenar_modelo}
+# Entrenamos un modelo de regresión lineal múltiple
+modelo_goles <- lm(goles ~ edad + min + asistencias + posicion, data = train_data)
+
+# Resumen del modelo
+summary(modelo_goles)
+```
+⚙️ Estructura del modelo
+goles = β₀ + β₁(edad) + β₂(min) + β₃(asistencias) + β₄(posición) + ε
+
+## 📊 4️⃣ Evaluar el rendimiento del modelo
+Calcular predicciones y métricas de error:
+```{r paso5_evaluar_modelo}
+# Predecimos con el modelo
+predicciones <- predict(modelo_goles, newdata = test_data)
+
+# Calcular métricas de desempeño
+rmse_val <- RMSE(predicciones, test_data$goles)
+r2_val <- R2(predicciones, test_data$goles)
+
+# Mostrar resultados
+cat("📏 Error Cuadrático Medio (RMSE):", round(rmse_val, 3), "\n")
+cat("📈 R-cuadrado (R²):", round(r2_val, 3), "\n")
+```
+
+🧩 Tabla 1 — Métricas Generales del Modelo
+
+```{r tabla_metrica_general, results='asis'}
+library(knitr)
+library(kableExtra)
+
+metricas_general <- data.frame(
+  Indicador = c(
+    "R-cuadrado (R²)",
+    "R-cuadrado ajustado",
+    "F-statistic",
+    "Error estándar residual"
+  ),
+  Valor = c("0.4861", "0.4725", "35.79 (p < 0.001)", "2.335"),
+  Interpretación = c(
+    "El modelo explica el 48.6% de la variabilidad total en los goles.",
+    "Tras ajustar por número de predictores, mantiene un buen poder explicativo.",
+    "El modelo completo es altamente significativo; al menos una variable influye en los goles.",
+    "El modelo se equivoca en promedio unos 2.3 goles por jugador, valor razonable dado el rango de datos."
+  )
+)
+
+kable(metricas_general, format = "html", caption = "📊 Métricas Generales del Modelo de Regresión Múltiple") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+💡Nota: Es un modelo con buen poder explicativo y ajustado correctamente (sin sobreajuste aparente).
+
+
+⚙️ Tabla 2 — Coeficientes Principales del Modelo
+```{r tabla_coeficientes_interpretacion, results='asis'}
+coeficientes_principales <- data.frame(
+  Variable = c(
+    "Intercepto",
+    "Edad",
+    "Minutos jugados",
+    "Asistencias",
+    "Posición CC_DL",
+    "Posición DL",
+    "Posición DL_CC"
+  ),
+  Estimación = c("-1.76", "+0.03", "+0.0010", "+0.52", "+1.42", "+3.59", "+2.00"),
+  Significancia = c("**", "ns", "***", "***", "**", "***", "***"),
+  Interpretación = c(
+    "Valor base del modelo.",
+    "Efecto leve y no significativo de la edad.",
+    "Cada 1000 minutos adicionales se asocian con +1 gol aprox.",
+    "Cada asistencia se relaciona con +0.52 goles adicionales.",
+    "Mediocampistas ofensivos marcan más goles que el grupo base.",
+    "Delanteros puros anotan +3.6 goles promedio respecto al grupo base.",
+    "Delanteros mixtos (DL_CC) también tienen un rendimiento goleador elevado."
+  )
+)
+
+kable(coeficientes_principales, format = "html", caption = "⚙️ Coeficientes Principales e Interpretación del Modelo") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("hover", "condensed", "responsive"))
+```
+
+
+📈 Tabla 3 — Evaluación del Modelo (Conjunto de Prueba)
+```{r tabla_resultados_test, results='asis'}
+evaluacion_test <- data.frame(
+  Métrica = c("Error Cuadrático Medio (RMSE)", "R-cuadrado (R²)", "Interpretación General"),
+  Valor = c("2.198", "0.516", ""),
+  Interpretación = c(
+    "En promedio, el modelo se desvía en unos 2.2 goles por jugador.",
+    "El modelo explica el 51.6% de la variabilidad de los goles en el conjunto de prueba.",
+    "El rendimiento es sólido y consistente con el entrenamiento; el modelo generaliza bien y no está sobreajustado."
+  )
+)
+
+kable(evaluacion_test, format = "html", caption = "📈 Evaluación del Modelo en Conjunto de Prueba") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+🧠 Tabla 4 — Conclusión Interpretativa Final
+```{r tabla_conclusion_modelo, results='asis'}
+conclusion_modelo <- data.frame(
+  Aspecto = c(
+    "Predictores más influyentes",
+    "Variables sin efecto significativo",
+    "Desempeño general",
+    "Conclusión final"
+  ),
+  Resumen = c(
+    "Los minutos jugados, las asistencias y las posiciones ofensivas (DL, DL_CC, CC_DL).",
+    "La edad y las posiciones defensivas.",
+    "El modelo explica aproximadamente el 50% de la variabilidad total en los goles con un error moderado.",
+    "La productividad goleadora depende principalmente de la participación activa en cancha y del rol táctico ofensivo, más que de la edad."
+  )
+)
+
+kable(conclusion_modelo, format = "html", caption = "🧠 Conclusión Interpretativa del Modelo de Regresión") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+🧩 En Resumen:
+
+- Los minutos jugados y las asistencias son los predictores más sólidos y estadísticamente significativos.
+- Las posiciones ofensivas (DL, DL_CC, CC_DL) son las que verdaderamente elevan la cantidad de goles esperada.
+- La edad no resulta significativa, coherente con el EDA.
+- El modelo predice razonablemente bien y explica casi la mitad de la variabilidad total en goles (R² ≈ 0.48).
+
+🧩 Implicancia:
+- Los minutos jugados, asistencias y posición ofensiva son las variables más influyentes para explicar el número de goles de un jugador en la liga española.
+- Mientras que la edad y posiciones defensivas no aportan un efecto significativo.
+- Se confirma que la productividad goleadora depende más de la participación y el rol táctico que de la edad del jugador.
+
+
+
+## Transición entre Modelo de Regresión y ANOVA
+- Luego de entrenar y evaluar el modelo de regresión y obtener métricas de desempeño como el R-cuadrado y el RMSE, se complementa analizando cómo varían los goles según la posición de los jugadores.
+- La regresión permite cuantificar la relación entre variables continuas y categóricas, pero un análisis más específico sobre la diferencia promedio de goles entre posiciones requiere aplicar técnicas de comparación de medias. Se realiza el Análisis de Varianza (ANOVA) seguido de la prueba de comparaciones múltiples de Tukey.
+- Se busca determinar si existen diferencias estadísticamente significativas en la capacidad goleadora entre las distintas posiciones, al identificar qué posiciones concretas difieren entre sí, más allá de lo que el modelo de regresión pueda indicar.
+- Se complementa la interpretación del modelo con hallazgos más intuitivos y visuales, para presentar resultados a públicos variados (entrenadores, analistas deportivos o aficionados).
+- El ANOVA/Tukey se integra de forma natural dentro del flujo de análisis, después de evaluar el modelo predictivo y antes de profundizar en conclusiones finales sobre el desempeño de los jugadores.
+
+
+# 🧩 Paso 6 — ANOVA y Comparaciones entre Posiciones (Integrado)
+## Ajuste de ANOVA
+```{r}
+# ANOVA: Goles según posición
+anova_goles <- aov(goles ~ posicion, data = df)
+summary(anova_goles)
+```
+
+## Comparación múltiple Tukey
+```{r}
+# Comparación múltiple entre todas las posiciones
+tukey_goles <- TukeyHSD(anova_goles)
+
+# Mostrar resultados
+tukey_goles
+```
+
+## Gráfico de Tukey
+```{r}
+plot(tukey_goles, las=1, col="steelblue")
+```
+### Conlusiones ANOVA/Tukey:
+
+#### ANOVA
+- Valor F = 19 y p < 2e-16 → Rechazamos H₀.
+- Existe diferencias estadísticamente significativa en goles promedio entre al menos dos posiciones.
+
+#### Comparaciones de Tukey
+- Posiciones con promedio de goles alto: DL (mediocampistas), DL_CC y CC_DL marcan más que CC y otras posiciones ofensivas.
+- Posiciones con promedio de goles bajo: PO (porteros), DL_DF y DL_CC_DF marcan significativamente menos.
+- Las posiciones ofensivas e híbridas muestran diferencias significativas frente a defensivas o porteros.
+
+##### Conclusión final:
+- La posición influye claramente en la capacidad goleadora.
+- Es curioso que los mediocampistas (DL) presentan el promedio de goles más alto en este dataset.
+- Los roles mixtos (CC_DL, DL_CC) también superan en promedio a defensas y porteros.
+
+
+# 🧠 Paso 7 — Evaluación y diagnóstico Visual del Modelo de Regresión
+## Introducción
+Se realiza evaluación visual de los resultados del modelo de regresión múltiple ajustado en el paso anterior.  
+Se analizan tres gráficos de diagnóstico clásicos:  
+(1) Ajuste del modelo, (2) Homocedasticidad y (3) Normalidad de los residuos.
+
+### Nota: en caso de haber aplicado Restart R se recrea de nuevo el modelo antes de las gráficas:
+```{r asegurar_modelo, include=FALSE}
+# ⚙️ Asegurar que el modelo y los datos existen
+if (!exists("train_data") | !exists("test_data")) {
+  set.seed(123)
+  train_index <- createDataPartition(df$goles, p = 0.8, list = FALSE)
+  train_data <- df[train_index, ]
+  test_data <- df[-train_index, ]
+}
+
+if (!exists("modelo")) {
+  modelo <- lm(goles ~ edad + min + asistencias + posicion, data = train_data)
+}
+```
+Para hacerlo 100% robusto (por si el entorno se limpia, o el profesor abre tu notebook desde cero), agregá esta celda de seguridad justo antes de tus gráficas:
+
+## 🧠 Gráficas explicativas
+
+#### 1️⃣ Gráfico de Valores Reales vs. Predichos
+Para ver qué tan cerca están las predicciones del modelo de los valores reales de goles. Una buena regresión debe indicar puntos alineados a la diagonal (línea roja).
+```{r grafico_real_vs_predicho, fig.width=6, fig.height=5}
+predicciones <- data.frame(
+  Real = test_data$goles,
+  Predicho = predict(modelo, newdata = test_data)
+)
+
+ggplot(predicciones, aes(x = Real, y = Predicho)) +
+  geom_point(alpha = 0.7, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "🎯 Valores Reales vs Predichos",
+    subtitle = "Comparación entre goles observados y estimados por el modelo",
+    x = "Goles Reales",
+    y = "Goles Predichos"
+  ) +
+  theme_minimal()
+```
+
+#### 2️⃣ Gráfico de **Residuos vs. Predicciones**
+Para comprobar si los errores del modelo (residuos) son aleatorios.  
+Si se observa una nube difusa sin patrón claro, el modelo es consistente.  
+Si se muestra una forma curva o cono, el modelo puede tener problemas de ajuste.
+
+```{r grafico_residuos, fig.width=6, fig.height=5}
+residuos <- resid(modelo)
+predichos <- predict(modelo)
+
+ggplot(data.frame(predichos, residuos), aes(x = predichos, y = residuos)) +
+  geom_point(alpha = 0.6, color = "darkorange") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "📉 Residuos vs Predicciones",
+    subtitle = "Evaluación de homocedasticidad del modelo",
+    x = "Valores Predichos",
+    y = "Residuos (Errores)"
+  ) +
+  theme_minimal()
+```
+
+#### 3️⃣ Histograma o **Gráfico QQ de Residuos**
+Verifica si los errores del modelo se distribuyen normalmente (supuesto de regresión lineal).
+
+```{r grafico_qqplot, fig.width=6, fig.height=5}
+ggplot(data.frame(residuos), aes(sample = residuos)) +
+  stat_qq(color = "royalblue") +
+  stat_qq_line(color = "red", linetype = "dashed") +
+  labs(
+    title = "📊 QQ-Plot de Residuos",
+    subtitle = "Comprobación de normalidad de los residuos"
+  ) +
+  theme_minimal()
+```
+
+#### Diagnóstico
+```{r diagnostico_visual_html, results='asis'}
+library(kableExtra)
+
+diagnostico_modelo <- data.frame(
+  Gráfico = c(
+    "🎯 Valores Reales vs. Predichos",
+    "📉 Residuos vs. Predicciones",
+    "📊 QQ-Plot de Residuos"
+  ),
+  Supuesto = c(
+    "Ajuste del Modelo (Linealidad)",
+    "Homocedasticidad (Varianza constante de errores)",
+    "Normalidad de los Residuos"
+  ),
+  Observación_Principal = c(
+    "Alta dispersión en valores bajos (0–5 goles) y subestimación de goleadores con más de 10 goles. El modelo predice hasta ~7.5 goles y no capta la magnitud de los jugadores de élite.",
+    "Patrón de cono invertido: los residuos se dispersan más a medida que aumentan los valores predichos. La varianza del error no es constante.",
+    "Los puntos se alinean en el centro, pero se desvían en las colas. Cola derecha con outliers positivos (jugadores top subestimados)."
+  ),
+  Conclusión = c(
+    "El modelo muestra un ajuste pobre en los extremos. No capta la asimetría de la variable dependiente. Sería recomendable aplicar una transformación logarítmica o usar un modelo de conteo (Poisson o Neg. Binomial).",
+    "Se viola la homocedasticidad: los errores estándar y p-valores pueden ser inestables. La varianza del error aumenta con el valor predicho.",
+    "Se viola la normalidad: los residuos presentan cola derecha pesada. La presencia de outliers afecta la estimación lineal tradicional."
+  )
+)
+
+kable(diagnostico_modelo, format = "html",
+      caption = "🧠 Diagnóstico Visual del Modelo de Regresión Múltiple") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(4, width = "25em")
+```
+
+
+📝 Resumen de diagnóstico interpretativo complementario
+
+**Conclusión general del diagnóstico:**
+
+El modelo lineal ajustado para predecir el número de goles presenta tres debilidades estructurales:
+
+1. **Ajuste insuficiente:** Tiende a subestimar de forma sistemática los valores extremos (jugadores con muchos goles), lo que indica que el modelo lineal no es capaz de representar adecuadamente la relación entre minutos/asistencias y goles.
+
+2. **Heterocedasticidad:** La varianza del error aumenta conforme crecen los valores predichos. Esto invalida los supuestos de varianza constante necesarios para la inferencia lineal fiable.
+
+3. **No normalidad:** Los residuos no siguen una distribución normal debido a la existencia de outliers significativos (jugadores de rendimiento excepcional).
+
+**Recomendación metodológica:**
+Dado que la variable dependiente “goles” es un **conteo discreto y asimétrico**, el uso de una **regresión de Poisson** o **binomial negativa**, o incluso modelos **Zero-Inflated (ZIP o ZINB)**, sería más adecuado.  
+Estos modelos pueden manejar la abundancia de ceros y la dispersión observada, ofreciendo una estimación más realista del rendimiento goleador.
+
+
+#### **Recomendación metodológica:**
+
+##### Modelado Avanzado: Regresión de Conteo (Zero-Inflated)
+- El modelo de Regresión Lineal (RL) del Paso 5 falló los supuestos de normalidad y homocedasticidad (característica común en variables de conteo como "goles") y se determinó que un modelo especializado es necesario.
+- Se evalúan modelos Zero-Inflated Poisson (ZIP) y Zero-Inflated Negative Binomial (ZINB) del paquete pscl, ya que la variable "goles" presenta una alta inflación de ceros (jugadores con 0 goles).
+- Diagnóstico y simplificación: En los primeros modelos ZINB existe un problema crítico de singularidad computacional (colinealidad extrema), que impide cálculo de errores estándar de los coeficientes, por la alta redundancia de variables (Colinealidad entre min (minutos) y posicion que miden aspectos muy similares del rol del jugador)
+- Exceso de categorías en posicion, la alta granularidad de categorías híbridas (DF_DL) causa separación de datos e incurre así en la singularidad.
+
+**Se simplifica de dos maneras sucesivas:**
+- Eliminar variable min (minutos jugados).
+- Crear nueva variable posicion_simple y agrupar las posiciones híbridas en categorías robustas: Ataque, Medio, Defensa, y Portero.
+
+**Modelo Final y Resultados**
+A continuación, se presenta el modelo Zero-Inflated Negative Binomial (ZINB) final. Para atender la problemática de diagnóstico de la RL y la sobredispersión inherente a los datos de conteo. Incluye las variables: edad, asistencias y la variable categórica simplificada posicion_simple para predecir la tasa de goles y la probabilidad de registrar cero goles.
+
+
+**1. Añadir la Columna Simplificada**
+```{r}
+### Chunk: Simplificación de la Posición
+library(dplyr)
+
+# Sobrescribe el data frame modelo_df añadiendo la columna posicion_simple
+modelo_df <- modelo_df %>%
+  mutate(posicion_simple = case_when(
+    # Delanteros y ofensivos puros (DL, CC_DL)
+    grepl("DL|CC_DL", posicion) ~ "Ataque", 
+    # Centrocampistas puros (CC, CC_DF)
+    grepl("CC", posicion) & !grepl("DL|DF", posicion) ~ "Medio",
+    # Defensas y mediocentros defensivos (DF, DF_CC)
+    grepl("DF", posicion) & !grepl("DL", posicion) ~ "Defensa",
+    # Porteros
+    grepl("PO", posicion) ~ "Portero",
+    # Posiciones no especificadas que existan (para cubrir cualquier caso)
+    TRUE ~ "Otros"
+  ))
+
+# Variable de tipo factor para el modelo
+modelo_df$posicion_simple <- as.factor(modelo_df$posicion_simple)
+```
+
+**2. Ejecutar el Modelo ZINB Final**
+```{r}
+## Chunk: Modelo ZINB Final
+zinb_model_final <- zeroinfl(goles ~ edad + asistencias + posicion_simple | posicion_simple,
+                             data = modelo_df, dist = "negbin")
+summary(zinb_model_final)
+```
+**Conclusiones finales del modelo**
+```{r}
+# Tabla ZINB
+# Obtener el resumen del modelo
+summary_zinb <- summary(zinb_model_final)
+
+# --- 1. Extraer y formatear el Modelo de Conteo (Count Model) ---
+conteo_raw <- as.data.frame(summary_zinb$coefficients$count)
+# Asignar los nombres de fila como una columna del data frame.
+conteo_df <- conteo_raw %>%
+  # Asignamos la columna 'Termino' antes de entrar a la tubería
+  mutate(Termino = rownames(conteo_raw)) %>%
+  # Limpieza y cálculos
+  mutate(
+    Componente = "Tasa de Goles (Conteo)",
+    Termino = case_when(
+      Termino == "(Intercept)" ~ "Línea Base: Atacante",
+      Termino == "edad" ~ "Edad (años)",
+      Termino == "asistencias" ~ "Asistencias",
+      Termino == "posicion_simpleDefensa" ~ "Posición: Defensa",
+      Termino == "posicion_simpleMedio" ~ "Posición: Medio",
+      Termino == "posicion_simplePortero" ~ "Posición: Portero",
+      Termino == "Log(theta)" ~ "Log(theta) (Dispersion)",
+      TRUE ~ Termino
+    ),
+    Effect_Ratio = exp(Estimate),
+    Significancia = case_when(
+      `Pr(>|z|)` < 0.001 ~ "***",
+      `Pr(>|z|)` < 0.01 ~ "**",
+      `Pr(>|z|)` < 0.05 ~ "*",
+      `Pr(>|z|)` < 0.1 ~ ".",
+      TRUE ~ ""
+    )
+  ) %>%
+  dplyr::select(Componente, Termino, Estimate, Std.Error = `Std. Error`, Z_Value = `z value`, P_Value = `Pr(>|z|)`, Effect_Ratio, Significancia)
+
+# --- 2. Extraer y formatear el Modelo de Ceros (Zero-Inflation Model) ---
+ceros_raw <- as.data.frame(summary_zinb$coefficients$zero)
+ceros_df <- ceros_raw %>%
+  # Asignamos la columna 'Termino' antes de entrar a la tubería
+  mutate(Termino = rownames(ceros_raw)) %>%
+  # Limpieza y cálculos
+  mutate(
+    Componente = "Probabilidad de Cero Extra",
+    Termino = case_when(
+      Termino == "(Intercept)" ~ "Línea Base: Atacante",
+      Termino == "posicion_simpleDefensa" ~ "Posición: Defensa",
+      Termino == "posicion_simpleMedio" ~ "Posición: Medio",
+      Termino == "posicion_simplePortero" ~ "Posición: Portero",
+      TRUE ~ Termino
+    ),
+    Effect_Ratio = NA_real_,
+    Significancia = case_when(
+      `Pr(>|z|)` < 0.001 ~ "***",
+      `Pr(>|z|)` < 0.01 ~ "**",
+      `Pr(>|z|)` < 0.05 ~ "*",
+      `Pr(>|z|)` < 0.1 ~ ".",
+      TRUE ~ ""
+    )
+  ) %>%
+  dplyr::select(Componente, Termino, Estimate, Std.Error = `Std. Error`, Z_Value = `z value`, P_Value = `Pr(>|z|)`, Effect_Ratio, Significancia)
+
+# --- 3. Unir y generar la tabla final con kableExtra ---
+final_df <- bind_rows(conteo_df, ceros_df) %>%
+  mutate(across(where(is.numeric), ~round(.x, 3)))
+
+final_df %>%
+  kable(
+    caption = "Resultados del Modelo Zero-Inflated Negative Binomial (ZINB) Final",
+    format = "html",
+    align = 'lrrrrrr',
+    col.names = c("Componente", "Término", "Estimación", "Error Est.", "Valor Z", "Valor P", "Efecto Ratio (e^Est.)", "Sig.")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "left"
+  ) %>%
+  pack_rows(
+    index = c(
+      "Modelo de Conteo (Tasa de Goles)" = nrow(conteo_df),
+      "Modelo de Inflación de Ceros" = nrow(ceros_df)
+    )
+  )
+```
+
+**🏁 Hallazgos del análisis exploratorio, la regresión y el diagnóstico, culminando en el modelo de conteo más robusto: el Zero-Inflated Negative Binomial (ZINB).:**
+
+**1. Justificación del Modelo ZINB**
+- Inflación de Ceros: La distribución de la variable Goles muestra alta concentración de valores en cero, lo que confirma la necesidad de un modelo Zero-Inflated.
+- Sobredispersión: El parámetro Log(0)=0.126 (implica approx 1.134) es positivo en el modelo ZINB indicando sobredispersión (mayor varianza que la media) y justificando el uso de la distribución Negative Binomial sobre la Poisson.
+- Modelo Válido: La simplificación de la variable Posicion a posicion_simple resolvió la singularidad computacional, produciendo errores estándar y valores p válidos en el modelo de conteo.
+
+**2. Interpretación del Modelo de Conteo (Tasa Esperada de Goles):** Predice la tasa esperada de goles para un jugador que se espera que anote (excluyendo los "ceros extra"). Todos los coeficientes son altamente significativos (p << 0.05) con excepción del intercepto (Línea Base: Atacante) que es marginalmente significativo.
+
+  - A. Factores Positivos (Aumento de Goles): 
+    - Asistencias es el factor más influyente. Por cada asistencia adicional, la tasa esperada de goles de un jugador aumenta aproximadamente en un 27.1% (Effect Ratio = 1.271, p < 0.001). Fuerte relación entre la capacidad de generar jugadas (asistencias) y la de finalizar (goles).
+    - La edad tiene un efecto positivo. Por cada año adicional de edad, la tasa esperada de goles aumenta aproximadamente en un 5.0% (Effect Ratio = 1.050, p < 0.001). Sugiere que en la muestra, los jugadores más veteranos tienden a tener una tasa de goles más alta (experiencia o roles ofensivos clave).
+
+  - B. Factores de Posición (Disminución de Goles):
+    - La posición es el principal factor de predicción, usando Atacante (Ataque) como línea base.
+
+```{r}
+# Crear el data frame con la información específica de la imagen
+tabla_efecto_ratio_posiciones <- data.frame(
+  Posicion = c("Mediocampista", "Defensa", "Portero"),
+  Efecto_Ratio = c(0.289, 0.232, 0.023),
+  Interpretacion = c(
+    "La tasa esperada de goles es 71.1% menor (1 - 0.289) que la de un atacante.",
+    "La tasa esperada de goles es 76.8% menor (1 - 0.232) que la de un atacante.",
+    "La tasa esperada de goles es prácticamente nula, siendo 97.7% menor que la de un atacante."
+  )
+)
+
+# Generar la tabla con kableExtra
+tabla_efecto_ratio_posiciones %>%
+  kable(
+    caption = "Factores de Posición: Disminución en la Tasa Esperada de Goles (Modelo ZINB)",
+    format = "html",
+    align = 'lcc', # Alinear la primera columna a la izquierda y las demás al centro
+    col.names = c("Posición", "Efecto Ratio (vs. Atacante)", "Interpretación")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = FALSE,
+    position = "left"
+  )
+```
+**3. Interpretación del Modelo de Inflación de Ceros (Probabilidad de No Marcar)**: 
+- El Modelo de Ceros intenta explicar la probabilidad de que un jugador obtenga cero goles debido a un factor estructural (un "cero extra"), más allá de lo que predice su baja tasa de goles.
+
+  - No Significativo: Todos los coeficientes en el Modelo de ceros son no significativos (valores p cercanos a 1.000).
+  - Implicación: Sugiere que la baja tasa esperada de goles para los Defensas, Mediocampistas y Porteros, como se predice en el Modelo de Conteo, ya es suficiente para explicar la alta cantidad de ceros. No se necesita un mecanismo "extra" de cero para estas posiciones, ya que su bajo promedio de goles de por sí predice una alta probabilidad de cero.
+
+  - Variables de  impacto significativo en el número de goles de un jugador
+    - Asistencias
+    - Edad
+    - Posición del jugador.
+
+  - Relación entre posiciones con el número de goles
+    - Diferencia jerárquica clara: Posición de "Ataque" tiene la tasa de goles más alta. Tasa de goles de los Mediocampistas, Defensas y Porteros es significativamente menor (71% a 97% menos, respectivamente) que la de los Atacantes. (intuitivo y coherente con el análisis exploratorio).
+
+  - Factor de "experiencia" / Edad influye en los goles
+    - La edad está asociada positivamente con una tasa de goles un 5% mayor por año.
+
+
+
+# ✅ Paso 8: Interpretación integral y conclusiones finales
+## Objetivo: Integrar resultados del EDA, ANOVA/Tukey y el Modelo ZINB
+
+### 1. Interpretación Clave del Modelo ZINB (Efecto de la Posición)
+Esta tabla resume cómo las diferentes posiciones impactan la tasa esperada de goles, tomando la categoría "Ataque" como línea base
+
+| Posición | Efecto Ratio (vs. Atacante) | Interpretación |
+| :--- | :--- | :--- |
+| Mediocampista | 0.289 | La tasa esperada de goles es **71.1% menor** (1−0.289) que la de un atacante. |
+| Defensa | 0.232 | La tasa esperada de goles es **76.8% menor** (1−0.232) que la de un atacante. |
+| Portero | 0.023 | La tasa esperada de goles es prácticamente nula, siendo **97.7% menor** que la de un atacante. |
+
+---
+
+### 2. Resumen de Hallazgos Metodológicos Clave
+```{r resumen_hallazgos_final_zinb, results='asis'}
+# 1. Definir métricas del Modelo Final ZINB
+# El modelo ZINB es el resultado final, por lo que reemplazamos las métricas de la Regresión Lineal fallida (RMSE, R2).
+# Estas funciones se ejecutan sobre el objeto 'zinb_model_final' creado en el Paso 7.
+aic_val <- round(AIC(zinb_model_final), 3)
+loglik_val <- round(logLik(zinb_model_final), 3)
+
+# 2. Crear la tabla integrada de hallazgos, reemplazando la fila "Regresión" por "Modelo ZINB"
+hallazgos_final <- data.frame(
+  Analisis = c("Exploratorio","Modelo ZINB","ANOVA","Tukey"),
+  Hallazgos = c(
+    "Distribución con alta inflación de ceros y sobredispersión (necesidad ZINB).",
+    paste0("LogLik = ", loglik_val, ", AIC = ", aic_val, ". Modelo válido y robusto para datos de conteo."),
+    "Diferencias significativas en goles promedio entre posiciones (F=19, p<2e-16).",
+    "DL > CC y roles híbridos ofensivos (CC_DL, DL_CC) son consistentemente superiores."
+  )
+)
+
+# 3. Generar la tabla HTML
+library(knitr)
+library(kableExtra)
+
+hallazgos_final %>%
+  kable(caption = "Resumen de Hallazgos Clave") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### 3. Conclusiones y discusión final
+- A. Transición al Modelo ZINBE
+  - Análisis Exploratorio y el ANOVA/Tukey establen que la "Posición" es un predictor clave de los goles.
+    - Pero el diagnóstico del Modelo de Regresión Lineal (Paso 7) reveló fallos críticos (heterocedasticidad y no normalidad)
+    - Requirió adoptar el Modelo ZINB para variables de conteo discreto con inflación de ceros como los goles.
+    
+- B. Hallazgos del Modelo ZINB:
+  - Factores Positivos:
+    - Asistencias: Factor más influyente. Por cada asistencia, la tasa esperada de goles aumenta aprox. en 27.1% (Effect Ratio=1.271), fuerte conexión entre creación y finalización.
+    - Edad: Por cada año adicional de edad la tasa esperada de goles aumenta aprox. un 5.0%. Sugiere que la experiencia o roles clave en el equipo son importantes.
+    
+  - Factor Dominante (Posición): 
+    - Análisis confirma y cuantifica la jerarquía de goles: La tasa de goles de Mediocampistas, Defensas y Porteros es significativamente menor (entre 71% y 97% menos, respectivamente) que la de los Atacantes.
+  
+  - Inflación de Ceros: El Modelo de Ceros no encontró variables significativas. Implica que la baja tasa esperada de goles para roles defensivos es suficiente para explicar la abundancia de jugadores con 0 goles.
+    
+- C. Integración y Estrategia:
+  - Liderazgo Ofensivo: Mediocampistas (DL) y roles híbridos ofensivos (CC_DL, DL_CC) lideran el promedio de goles (confirmado por Tukey) y demuestran importancia de la flexibilidad táctica en el gol.
+  
+  - Predicción y Rol: La posición de juego es el factor más determinante. El ZINB permite no solo identificar las diferencias (ANOVA) sino cuantificar el impacto (Efecto Ratio) de cada rol en la capacidad goleadora, esencial para el diseño de estrategias.
+  
+- Conclusión Final Destacada:
+  - La posición de juego es un factor determinante en la capacidad goleadora.
+  - Mediocampistas (DL) y roles híbridos ofensivos lideran promedio de goles, incluso más que los delanteros puros
+  - El Modelo ZINB es el enfoque estadístico más robusto para predecir goles, confirmando que la productividad goleadora depende de un rol táctico ofensivo, asistencias y experiencia.
